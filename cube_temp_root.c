@@ -84,7 +84,6 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
-#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -845,12 +844,6 @@ void kwrite_u32(u64 kaddr, u32 data) {
 
 void prepare_globals(void) {
     pid = getpid();
-
-    struct utsname kernel_info;
-    if (uname(&kernel_info) == -1)
-        err(1, "determine kernel release");
-    if (strcmp(kernel_info.release, "4.9.82-perf"))
-        warnx("target kernel release is not '4.9.82-perf'");
 
     dummy_page = mmap((void *)0x100000000ul, 2 * PAGE_SIZE,
                       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

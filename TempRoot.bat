@@ -5,14 +5,18 @@ set "ADB=C:\platform-tools\adb.exe"
 if not exist "%ADB%" set "ADB=adb"
 
 set "TARGET=%~1"
-if "%TARGET%"=="" set "TARGET=192.168.0.40:5555"
+if not defined TARGET (
+  echo ERROR: an ADB serial or address is required.
+  echo Usage: %~nx0 ADB_SERIAL_OR_ADDRESS
+  echo Run "adb devices" to list connected targets.
+  exit /b 1
+)
 
 if not exist "%~dp0cube_temp_root" (
   echo ERROR: cube_temp_root was not found next to this batch file.
   exit /b 2
 )
 
-"%ADB%" connect "%TARGET%" >nul 2>&1
 "%ADB%" -s "%TARGET%" push "%~dp0cube_temp_root" /data/local/tmp/cube_temp_root
 if errorlevel 1 exit /b 3
 

@@ -1,24 +1,29 @@
 #  temporary root shell
 
-This tool is specific to the tested  build:
+This tool targets compatible  builds with:
 
 - Android 8.1.0 / API 27
-- kernel `4.9.82-perf`
 - MSM8953
 - vulnerable Binder driver (CVE-2019-2215)
 
+It does not require an exact kernel release string. Compatibility still depends
+on the vulnerable Binder implementation and the kernel structure layouts used
+by the exploit, so use it only on builds known to be compatible.
+
 ## Interactive use
 
-With network ADB at `192.168.0.40:5555`, run:
+Choose a target reported by `adb devices` and pass its serial or address
+explicitly:
 
 ```bat
-TempRoot.bat
+TempRoot.bat ADB_SERIAL_OR_ADDRESS
 ```
 
-For another ADB serial or address:
+For network ADB, connect first if necessary and pass the same address:
 
 ```bat
-TempRoot.bat 192.168.0.40:5555
+adb connect DEVICE_IP:5555
+TempRoot.bat DEVICE_IP:5555
 ```
 
 At the `cube-root#` prompt, enter ordinary Android shell commands. Use `exit`
@@ -28,15 +33,15 @@ after the session exits.
 ## Manual use
 
 ```text
-adb -s 192.168.0.40:5555 push cube_temp_root /data/local/tmp/cube_temp_root
-adb -s 192.168.0.40:5555 shell chmod 755 /data/local/tmp/cube_temp_root
-adb -s 192.168.0.40:5555 shell -t /data/local/tmp/cube_temp_root root-shell
+adb -s ADB_SERIAL_OR_ADDRESS push cube_temp_root /data/local/tmp/cube_temp_root
+adb -s ADB_SERIAL_OR_ADDRESS shell chmod 755 /data/local/tmp/cube_temp_root
+adb -s ADB_SERIAL_OR_ADDRESS shell -t /data/local/tmp/cube_temp_root root-shell
 ```
 
 For a single non-interactive command:
 
 ```text
-adb -s 192.168.0.40:5555 shell /data/local/tmp/cube_temp_root root-command id
+adb -s ADB_SERIAL_OR_ADDRESS shell /data/local/tmp/cube_temp_root root-command id
 ```
 
 ## Security model and limitations
