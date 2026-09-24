@@ -65,9 +65,7 @@ adb -s ADB_SERIAL_OR_ADDRESS shell /data/local/tmp/temp_root root-command id
 
 The shell has UID/GID 0 and full Linux capabilities, but deliberately retains
 the `u:r:shell:s0` SELinux domain. SELinux stays Enforcing, so accesses denied
-to the normal shell domain can still fail even with UID 0. The separate
-validated aboot dumper uses a narrowly scoped PID 1 credential handoff for
-block-device reads.
+to the normal shell domain can still fail even with UID 0.
 
 The tool dynamically locates `task_struct`, the task list, private credentials,
 and PID 1 credentials. It restores the child credential bytes before exiting.

