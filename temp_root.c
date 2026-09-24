@@ -624,9 +624,9 @@ static void root_child(struct root_shared *shared) {
         shared->command_status = run_android_shell_command(shared->command);
     } else {
         char line[1024];
-        printf("\nCube temporary root shell (type 'exit' to restore)\n");
+        printf("\nTemporary root shell (type 'exit' to restore)\n");
         while (!root_stop) {
-            printf("cube-root# ");
+            printf("root# ");
             fflush(stdout);
             if (!fgets(line, sizeof(line), stdin))
                 break;
@@ -1322,7 +1322,7 @@ int main(int argc, char *argv[]) {
     int root_shell = argc == 2 && !strcmp(argv[1], "root-shell");
     int root_command = argc >= 3 && !strcmp(argv[1], "root-command");
 
-    printf(" temporary root via CVE-2019-2215\n");
+    printf("Temporary root via CVE-2019-2215\n");
 
     execute_stage(0); /* prepare_globals() */
     execute_stage(1); /* find_current() */

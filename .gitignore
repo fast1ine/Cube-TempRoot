@@ -1,0 +1,4 @@
+# built binary — build from temp_root.c, do not commit
+/temp_root
+/cube_temp_root
+*.o

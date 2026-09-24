@@ -12,24 +12,24 @@ if not defined TARGET (
   exit /b 1
 )
 
-if not exist "%~dp0cube_temp_root" (
-  echo ERROR: cube_temp_root was not found next to this batch file.
+if not exist "%~dp0temp_root" (
+  echo ERROR: temp_root was not found next to this batch file.
   exit /b 2
 )
 
-"%ADB%" -s "%TARGET%" push "%~dp0cube_temp_root" /data/local/tmp/cube_temp_root
+"%ADB%" -s "%TARGET%" push "%~dp0temp_root" /data/local/tmp/temp_root
 if errorlevel 1 exit /b 3
 
-"%ADB%" -s "%TARGET%" shell chmod 755 /data/local/tmp/cube_temp_root
+"%ADB%" -s "%TARGET%" shell chmod 755 /data/local/tmp/temp_root
 if errorlevel 1 exit /b 4
 
 echo.
-echo Type exit at the cube-root prompt to restore the temporary credentials.
+echo Type exit at the root prompt to restore the temporary credentials.
 echo SELinux remains Enforcing in this shell.
 echo Do not disconnect power while the temporary root shell is active.
 echo.
-"%ADB%" -s "%TARGET%" shell -t /data/local/tmp/cube_temp_root root-shell
+"%ADB%" -s "%TARGET%" shell -t /data/local/tmp/temp_root root-shell
 set "ROOT_RC=%ERRORLEVEL%"
 
-"%ADB%" -s "%TARGET%" shell rm -f /data/local/tmp/cube_temp_root >nul 2>&1
+"%ADB%" -s "%TARGET%" shell rm -f /data/local/tmp/temp_root >nul 2>&1
 exit /b %ROOT_RC%
